@@ -66,8 +66,8 @@ const unsigned int display_index[10] = {
 };
 
 unsigned int button_state_integral = 0;
-unsigned int button_debounce_threshold = 10;
-unsigned int button_state_integral_max = 20;
+unsigned int button_debounce_threshold = 8;
+unsigned int button_state_integral_max = 16;
 unsigned char button_pushed_flag = 0;
 unsigned int shift_register_data[2];
 unsigned int timer_value;
@@ -76,15 +76,16 @@ int tst;
 void timer2_init(void) {
     // timer2 is used to clock the main program loop
     // the clock source is the system clock / 4 (2MHz)
-    T2CONbits.TMR2ON = 0;        // turn off timer2 for configuration
-    PIR1bits.TMR2IF = 0;         //reset Timer2 overflow interrupt flag
+    T2CONbits.TMR2ON = 0;          //turn off timer2 for configuration
+    PIR1bits.TMR2IF = 0;           //reset Timer2 overflow interrupt flag
     
-    T2CONbits.T2CKPS = 0b10;       // pre-scaler set to 1:16
-    T2CONbits.T2OUTPS = 0b1011;    // post-scaler set to 1:12
-    TMR2 = 0x00;                   // clear timer2
-    PR2 = 0xFF;                    // set timer2 "match" register to max value
-         
-    T2CONbits.TMR2ON = 1;       //turn on Timer2
+    T2CONbits.T2CKPS = 0b10;       //pre-scaler set to 1:16
+    T2CONbits.T2OUTPS = 0b1011;    //post-scaler set to 1:12
+    TMR2 = 0x00;                   //clear timer2
+    PR2 = 0xFF;                    //set timer2 "match" register to max value
+    
+    // the above sets the interrupt freq to (((FOSC/4) / 16) / 12) = 10.42KHz
+    T2CONbits.TMR2ON = 1;          //turn on Timer2
     
     return;
 }
@@ -94,11 +95,14 @@ void tmr2_interrupt_handler(void){
     //decide whether or not to keep counting the seconds for which button pushed
     //update the shift register data
     //shift out the new data
+    
+    // just testing to see if the program gets here...
     if (button_pushed_flag) {
         PORTCbits.RC2 = 1;
     } else {
         PORTCbits.RC2 = 0;
     }
+    
     PIR1bits.TMR2IF = 0;                 //reset the interrupt flag
     return;
 }
