@@ -129,7 +129,7 @@ void tmr2_interrupt_handler(void){
     }
     
     //update the shift register data
-    //update_display_values(seconds_clock);
+    update_display_values(seconds_clock);
     //shift out the new data
     shiftout();
     
@@ -170,13 +170,12 @@ void shiftout(void){
     
     unsigned char w;
     
-    for (int i = 1; i < 0; i--){
-        for (int j = 7; j < 0; j--) {
+    for (int i = 1; i >= 0; i--){
+        for (int j = 7; j >= 0; j--) {
             // extract the relevant bit
             w = (unsigned char) (shift_register_data[i] >> j) & 1;
             // put the value on the shift register's data-in line (via shadow reg)
-            //PC_shadow ^= (-w ^ PC_shadow) & 1;
-            PC_shadow |= (1 << 0);
+            PC_shadow ^= (-w ^ PC_shadow) & 1;
             // pulse the shift register's clock line. the system clock is 2MHz, 
             // and the old '595 shift registers can run up 20MHz, so this "dumb"
             // approach should be fine here
