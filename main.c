@@ -50,6 +50,9 @@
 #pragma config BORV = LO        // Brown-out Reset Voltage Selection (Brown-out Reset Voltage (Vbor), low trip point selected.)
 #pragma config LVP = OFF        // Low-Voltage Programming Enable (Low-voltage programming disabled)
 
+// CONFIG3
+#define _XTAL_FREQ 8000000
+
 #include "button_timer.h"
 
 const unsigned int display_index[10] = {
@@ -69,9 +72,11 @@ unsigned int button_state_integral = 0;
 unsigned int button_debounce_threshold = 8;
 unsigned int button_state_integral_max = 16;
 unsigned char button_pushed_flag = 0;
-unsigned int shift_register_data[2];
-unsigned int timer_value;
-int tst;
+unsigned int shift_register_data[2] = {0b01100110, 0b11011010};
+unsigned int timer_value = 0;
+unsigned short long timer1_period = 250000;
+unsigned int seconds_clock = 0;
+unsigned char PC_shadow = 0;      //"shadow reg for PORTC to avoid R-M-W issues
 
 void timer2_init(void) {
     // timer2 is used to clock the main program loop
@@ -81,7 +86,7 @@ void timer2_init(void) {
     
     T2CONbits.T2CKPS = 0b10;       //pre-scaler set to 1:16
     T2CONbits.T2OUTPS = 0b1011;    //post-scaler set to 1:12
-    TMR2 = 0x00;                   //clear timer2
+    TMR2 = 0;                      //clear timer2
     PR2 = 0xFF;                    //set timer2 "match" register to max value
     
     // the above sets the interrupt freq to (((FOSC/4) / 16) / 12) = 10.42KHz
@@ -90,31 +95,67 @@ void timer2_init(void) {
     return;
 }
 
+void timer1_init(void) {
+    // timer1 is used to measure the duration of the button press
+    // the clock source is the system clock / 4 (2MHz)
+    T1CONbits.TMR1ON = 0;          //turn off timer2 for configuration
+    T1CONbits.TMR1CS = 0b00;       //use the internal system clock (FOSC / 4)
+    T1CONbits.T1CKPS = 0b11;       //prescaler set to 1:8
+    TMR1 = 0;                   //clear timer1
+    
+    //disable the gate
+    T1GCONbits.TMR1GE = 0;
+    
+    // the above sets the interrupt freq to ((FOSC/4) / 4) = 250KHz
+    
+    return;
+}
+
 void tmr2_interrupt_handler(void){
     button_debouncer(PORTAbits.RA2);    //update the button state
-    //decide whether or not to keep counting the seconds for which button pushed
-    //update the shift register data
-    //shift out the new data
-    
-    // just testing to see if the program gets here...
+
+    //keep counting the seconds for which button pushed?
     if (button_pushed_flag) {
-        PORTCbits.RC2 = 1;
+        T1CONbits.TMR1ON = 1;           //start timer1
+        PC_shadow |= (1 << 2); 
+        PORTC = PC_shadow;              //turn on the light next to the button
     } else {
-        PORTCbits.RC2 = 0;
+        T1CONbits.TMR1ON = 0;           //stop timer1
+        TMR1 = 0;                       //reset timer1
+        timer_value = 0;                //reset the "timer1 post-scaler"
+        seconds_clock = 0;
+        PC_shadow &= ~(1 << 2);
+        PORTC = PC_shadow;              //turn off the light next to the button
     }
+    
+    //update the shift register data
+    //update_display_values(seconds_clock);
+    //shift out the new data
+    shiftout();
     
     PIR1bits.TMR2IF = 0;                 //reset the interrupt flag
     return;
 }
 
-void convert_values_to_display_values(void){
+void tmr1_interrupt_handler(void){
+    //increment the "seconds" clock
+    timer_value++;
+    
+    if (timer_value >= timer1_period){
+        seconds_clock++;
+    }
+    
+    return;
+}
+
+void update_display_values(unsigned int value){
     
     unsigned int tens;
     unsigned int ones;
     
-    timer_value = timer_value % 100;                //remove the hundreds place
-    tens = (unsigned int) timer_value / 10;     //intentionally using int division
-    ones = (unsigned int) timer_value % 10;          
+    value = value % 100;                    //remove the hundreds place
+    tens = (unsigned int) value / 10;       //intentionally using int division
+    ones = (unsigned int) value % 10;          
     
     shift_register_data[1] = display_index[tens];
     shift_register_data[0] = display_index[ones];
@@ -126,20 +167,35 @@ void convert_values_to_display_values(void){
 void shiftout(void){
     // toggle the shift register's clock line 16 times to put in the new
     // display values
-    for (int i = 0; i < 16; i++) {
-        
-        // put the value on the shift register's data-in line
-        PORTCbits.RC0 = shift_register_data[i];
-        // pulse the shift register's clock line. the system clock is 2MHz, and
-        // the old '595 shift registers can run up 20MHz, so this "dumb"
-        // approach should be fine here
-        PORTCbits.RC1 = 0b1;
-        PORTCbits.RC1 = 0b0;
+    
+    unsigned char w;
+    
+    for (int i = 1; i < 0; i--){
+        for (int j = 7; j < 0; j--) {
+            // extract the relevant bit
+            w = (unsigned char) (shift_register_data[i] >> j) & 1;
+            // put the value on the shift register's data-in line (via shadow reg)
+            //PC_shadow ^= (-w ^ PC_shadow) & 1;
+            PC_shadow |= (1 << 0);
+            // pulse the shift register's clock line. the system clock is 2MHz, 
+            // and the old '595 shift registers can run up 20MHz, so this "dumb"
+            // approach should be fine here
+            PC_shadow |= (1 << 1);
+            PORTC = PC_shadow;          //write PORTC all at once to avoid RMW
+            __delay_us(1);
+            PC_shadow &= ~(1 << 1);
+            PORTC = PC_shadow;
+            __delay_us(1);
+        }
     }
+
     // pulse the clock line once more to account for the lag inherent in the
     // '595 shift registers when SCLK and RCLK are tied together
-    PORTCbits.RC1 = 0b1;
-    PORTCbits.RC1 = 0b0;
+    PC_shadow |= (1 << 1);
+    PORTC = PC_shadow;
+    __delay_us(1);
+    PC_shadow &= ~(1 << 1);
+    PORTC = PC_shadow;
     
     return;
 }
@@ -176,21 +232,17 @@ void main(void) {
     OSCCONbits.SPLLEN = 0b0;    // 4xPLL disabled
     
     // turn on interrupts
-    PIE1bits.TMR2IE = 0b1;      //enable timer2 to PR2 match interrupt (PR2 is 0xFF by default)
-    INTCONbits.PEIE = 0b1;      //enable peripheral interrupts
-    INTCONbits.GIE = 0b1;       //general interrupts be on
+    PIE1bits.TMR2IE = 1;      //enable timer2 to PR2 match interrupt (PR2 is 0xFF by default)
+    PIE1bits.TMR1IE = 1;      //enable timer1 overflow interrupt
+    INTCONbits.PEIE = 1;      //enable peripheral interrupts
+    INTCONbits.GIE = 1;       //general interrupts be on
     
     // configure the timers so that the button duration can be counted with
     // some kind of accuracy
     timer2_init();
-      
-    //PORTCbits.RC2 = 0;          //just to tell the user that the program started
-    
-    // read the button state
+    timer1_init();
+        
     while(1){
-        //start counting if the button goes from low to high
-        //stop counting when the button goes from high to low
-        //display the duration on the pair of seven-segment displays
         CLRWDT();               //clear the Watchdog Timer to keep the PIC from
                                 //resetting
     }
@@ -201,6 +253,11 @@ void interrupt ISR(void){
     // check for timer2 overflow interrupt
     if(PIR1bits.TMR2IF == 1){
         tmr2_interrupt_handler();
+    }
+    
+    // check for timer1 overflow interrupt
+    if(PIR1bits.TMR1IF == 1){
+        tmr1_interrupt_handler();
     }
     
     return;
