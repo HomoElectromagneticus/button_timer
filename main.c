@@ -33,7 +33,7 @@
 
 // CONFIG1
 #pragma config FOSC = INTOSC    // Oscillator Selection (INTOSC oscillator: I/O function on CLKIN pin)
-#pragma config WDTE = ON        // Watchdog Timer Enable (WDT enabled)
+#pragma config WDTE = OFF       // Watchdog Timer Enable (WDT enabled)
 #pragma config PWRTE = ON       // Power-up Timer Enable (PWRT enabled)
 #pragma config MCLRE = ON       // MCLR Pin Function Select (MCLR/VPP pin function is MCLR)
 #pragma config CP = OFF         // Flash Program Memory Code Protection (Program memory code protection is disabled)
@@ -73,8 +73,8 @@ unsigned int button_debounce_threshold = 8;
 unsigned int button_state_integral_max = 16;
 unsigned char button_pushed_flag = 0;
 unsigned int shift_register_data[2] = {0b01100110, 0b11011010};
-unsigned int timer_value = 0;
-unsigned short long timer1_period = 250000;
+unsigned short long timer_value = 0;
+unsigned short long timer1_period = 125000;
 unsigned int seconds_clock = 0;
 unsigned char PC_shadow = 0;      //"shadow reg for PORTC to avoid R-M-W issues
 
@@ -101,12 +101,12 @@ void timer1_init(void) {
     T1CONbits.TMR1ON = 0;          //turn off timer2 for configuration
     T1CONbits.TMR1CS = 0b00;       //use the internal system clock (FOSC / 4)
     T1CONbits.T1CKPS = 0b11;       //prescaler set to 1:8
-    TMR1 = 0;                   //clear timer1
+    TMR1 = 0;                      //clear timer1
     
     //disable the gate
     T1GCONbits.TMR1GE = 0;
     
-    // the above sets the interrupt freq to ((FOSC/4) / 4) = 250KHz
+    // the above sets the interrupt freq to ((FOSC/4) / 8) = 125KHz
     
     return;
 }
@@ -140,9 +140,10 @@ void tmr2_interrupt_handler(void){
 void tmr1_interrupt_handler(void){
     //increment the "seconds" clock
     timer_value++;
-    
+
     if (timer_value >= timer1_period){
         seconds_clock++;
+        timer_value = 0;
     }
     
     return;
@@ -173,7 +174,7 @@ void shiftout(void){
     for (int i = 1; i >= 0; i--){
         for (int j = 7; j >= 0; j--) {
             // extract the relevant bit
-            w = (unsigned char) (shift_register_data[i] >> j) & 1;
+            w = (shift_register_data[i] >> j) & 1;
             // put the value on the shift register's data-in line (via shadow reg)
             PC_shadow ^= (-w ^ PC_shadow) & 1;
             // pulse the shift register's clock line. the system clock is 2MHz, 
