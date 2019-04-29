@@ -56,16 +56,16 @@
 #include "button_timer.h"
 
 const unsigned int display_index[10] = {
-    0b11111100,         // 0
-    0b01100000,         // 1
-    0b11011010,         // 2
-    0b11110010,         // 3
-    0b01100110,         // 4
-    0b10110110,         // 5
-    0b10111110,         // 6
-    0b11100000,         // 7
-    0b11111110,         // 8
-    0b11100110,         // 9
+    0b00000011,         // 0
+    0b10011111,         // 1
+    0b00100101,         // 2
+    0b00001101,         // 3
+    0b10011001,         // 4
+    0b01001001,         // 5
+    0b01000001,         // 6
+    0b01110011,         // 7
+    0b00000001,         // 8
+    0b00011101,         // 9
 };
 
 unsigned int button_state_integral = 0;
@@ -170,6 +170,16 @@ void shiftout(void){
     // display values
     
     unsigned char w;
+
+    // pulse the clock line once more to account for the lag inherent in the
+    // '595 shift registers when SCLK and RCLK are tied together
+    PC_shadow &= ~(1 << 0);
+    PC_shadow |= (1 << 1);
+    PORTC = PC_shadow;
+    __delay_us(1);
+    PC_shadow &= ~(1 << 1);
+    PORTC = PC_shadow;
+    
     
     for (int i = 1; i >= 0; i--){
         for (int j = 7; j >= 0; j--) {
@@ -185,18 +195,9 @@ void shiftout(void){
             __delay_us(1);
             PC_shadow &= ~(1 << 1);
             PORTC = PC_shadow;
-            __delay_us(1);
         }
     }
 
-    // pulse the clock line once more to account for the lag inherent in the
-    // '595 shift registers when SCLK and RCLK are tied together
-    PC_shadow |= (1 << 1);
-    PORTC = PC_shadow;
-    __delay_us(1);
-    PC_shadow &= ~(1 << 1);
-    PORTC = PC_shadow;
-    
     return;
 }
 
