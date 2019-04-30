@@ -63,9 +63,9 @@ const unsigned int display_index[10] = {
     0b10011001,         // 4
     0b01001001,         // 5
     0b01000001,         // 6
-    0b01110011,         // 7
+    0b00011111,         // 7
     0b00000001,         // 8
-    0b00011101,         // 9
+    0b00011001,         // 9
 };
 
 unsigned int button_state_integral = 0;
@@ -169,20 +169,10 @@ void shiftout(void){
     // toggle the shift register's clock line 16 times to put in the new
     // display values
     
-    unsigned char w;
-
-    // pulse the clock line once more to account for the lag inherent in the
-    // '595 shift registers when SCLK and RCLK are tied together
-    PC_shadow &= ~(1 << 0);
-    PC_shadow |= (1 << 1);
-    PORTC = PC_shadow;
-    __delay_us(1);
-    PC_shadow &= ~(1 << 1);
-    PORTC = PC_shadow;
-    
+    unsigned char w;  
     
     for (int i = 1; i >= 0; i--){
-        for (int j = 7; j >= 0; j--) {
+        for (int j = 0; j <= 7; j++) {
             // extract the relevant bit
             w = (shift_register_data[i] >> j) & 1;
             // put the value on the shift register's data-in line (via shadow reg)
@@ -190,13 +180,20 @@ void shiftout(void){
             // pulse the shift register's clock line. the system clock is 2MHz, 
             // and the old '595 shift registers can run up 20MHz, so this "dumb"
             // approach should be fine here
+            PORTC = PC_shadow;
             PC_shadow |= (1 << 1);
             PORTC = PC_shadow;          //write PORTC all at once to avoid RMW
-            __delay_us(1);
             PC_shadow &= ~(1 << 1);
             PORTC = PC_shadow;
         }
     }
+    
+    // pulse the clock line once more to account for the lag inherent in the
+    // '595 shift registers when SCLK and RCLK are tied together
+    PC_shadow |= (1 << 1);
+    PORTC = PC_shadow;
+    PC_shadow &= ~(1 << 1);
+    PORTC = PC_shadow;
 
     return;
 }
