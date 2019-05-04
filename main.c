@@ -13,8 +13,10 @@
  *               ---|7_______8|--- "on" light
  * 
  * This program times the duration a button is pressed, and displays that
- * duration on a pair of simple seven-segment displays. The displays are run
- * using a pair of CD74HC595 shift register (maximum clock rate is ~ 20MHz).
+ * duration on a pair of simple seven-segment displays. The duration is 
+ * displayed as seconds with a tenth of a second after the decimal place. The 
+ * displays are run using a pair of CD74HC595 shift registers (maximum clock 
+ * rate is ~ 20MHz).
  * Created on April 17, 2019, 1:25 PM
  */
 
@@ -74,7 +76,7 @@ unsigned int button_state_integral_max = 16;
 unsigned char button_pushed_flag = 0;
 unsigned int shift_register_data[2] = {0b01100110, 0b11011010};
 unsigned short long timer_value = 0;
-unsigned short long timer1_period = 125000;
+unsigned short long timer1_period = 12500; //set to overflow every tenth of a second
 unsigned int seconds_clock = 0;
 unsigned char PC_shadow = 0;      //"shadow reg for PORTC to avoid R-M-W issues
 
@@ -132,8 +134,7 @@ void tmr2_interrupt_handler(void){
     update_display_values(seconds_clock);
     //shift out the new data
     shiftout();
-    
-    PIR1bits.TMR2IF = 0;                 //reset the interrupt flag
+
     return;
 }
 
@@ -161,6 +162,9 @@ void update_display_values(unsigned int value){
     shift_register_data[1] = display_index[tens];
     shift_register_data[0] = display_index[ones];
     
+    //turn on the decimal point for the tens place
+    shift_register_data[1] &= ~(1);
+    
     return;
 };
 
@@ -175,14 +179,14 @@ void shiftout(void){
         for (int j = 0; j <= 7; j++) {
             // extract the relevant bit
             w = (shift_register_data[i] >> j) & 1;
-            // put the value on the shift register's data-in line (via shadow reg)
+            // put the value on the shift reg's data-in line (via shadow reg)
             PC_shadow ^= (-w ^ PC_shadow) & 1;
+            PORTC = PC_shadow;
             // pulse the shift register's clock line. the system clock is 2MHz, 
             // and the old '595 shift registers can run up 20MHz, so this "dumb"
             // approach should be fine here
-            PORTC = PC_shadow;
             PC_shadow |= (1 << 1);
-            PORTC = PC_shadow;          //write PORTC all at once to avoid RMW
+            PORTC = PC_shadow;
             PC_shadow &= ~(1 << 1);
             PORTC = PC_shadow;
         }
@@ -190,10 +194,8 @@ void shiftout(void){
     
     // pulse the clock line once more to account for the lag inherent in the
     // '595 shift registers when SCLK and RCLK are tied together
-    PC_shadow |= (1 << 1);
-    PORTC = PC_shadow;
-    PC_shadow &= ~(1 << 1);
-    PORTC = PC_shadow;
+    PORTC |= (1 << 1);
+    PORTC &= ~(1 << 1);
 
     return;
 }
@@ -251,11 +253,14 @@ void interrupt ISR(void){
     // check for timer2 overflow interrupt
     if(PIR1bits.TMR2IF == 1){
         tmr2_interrupt_handler();
+        PIR1bits.TMR2IF = 0;                 //reset the interrupt flag
     }
     
     // check for timer1 overflow interrupt
     if(PIR1bits.TMR1IF == 1){
         tmr1_interrupt_handler();
+        //PIR1bits.TMR1IF = 0;                 //timer one doesn't work if this
+                                               //line isn't commented. why?
     }
     
     return;
