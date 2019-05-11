@@ -20,22 +20,9 @@
  * Created on April 17, 2019, 1:25 PM
  */
 
-/*
- * 0 = 0b11111100
- * 1 = 0b01100000
- * 2 = 0b11011010
- * 3 = 0b11110010
- * 4 = 0b01100110
- * 5 = 0b10110110
- * 6 = 0b10111110
- * 7 = 0b11100000
- * 8 = 0b11111110
- * 9 = 0b11100110
- */
-
 // CONFIG1
 #pragma config FOSC = INTOSC    // Oscillator Selection (INTOSC oscillator: I/O function on CLKIN pin)
-#pragma config WDTE = OFF        // Watchdog Timer Enable (WDT enabled)
+#pragma config WDTE = OFF       // Watchdog Timer Enable (WDT disabled)
 #pragma config PWRTE = ON       // Power-up Timer Enable (PWRT enabled)
 #pragma config MCLRE = ON       // MCLR Pin Function Select (MCLR/VPP pin function is MCLR)
 #pragma config CP = OFF         // Flash Program Memory Code Protection (Program memory code protection is disabled)
@@ -47,7 +34,7 @@
 
 // CONFIG2
 #pragma config WRT = OFF        // Flash Memory Self-Write Protection (Write protection off)
-#pragma config PLLEN = ON       // PLL Enable (4x PLL enabled)
+#pragma config PLLEN = OFF      // PLL Enable (4x PLL disabled)
 #pragma config STVREN = ON      // Stack Overflow/Underflow Reset Enable (Stack Overflow or Underflow will cause a Reset)
 #pragma config BORV = LO        // Brown-out Reset Voltage Selection (Brown-out Reset Voltage (Vbor), low trip point selected.)
 #pragma config LVP = OFF        // Low-Voltage Programming Enable (Low-voltage programming disabled)
@@ -68,12 +55,13 @@ unsigned int display_index[10] = {
 };
 
 unsigned int button_state_integral = 0;
-unsigned int button_debounce_threshold = 8;
-unsigned int button_state_integral_max = 16;
+unsigned int button_debounce_threshold = 3;
+unsigned int button_state_integral_max = 6;
 unsigned char button_pushed_flag = 0;
 unsigned int shift_register_data[2];
-unsigned short long timer_value = 0;
-unsigned short long timer4_period = 15625; //set to overflow every tenth of a second
+unsigned short long display_update_scaler = 0;
+unsigned short long timer4_pps = 0;         //timer4 post-post-scaler
+unsigned short long timer4_period = 1935;  //set to overflow every tenth of a second
 unsigned int seconds_clock = 0;
 unsigned char PC_shadow = 0;      //"shadow reg for PORTC to avoid R-M-W issues
 
@@ -83,12 +71,12 @@ void timer2_init(void) {
     T2CONbits.TMR2ON = 0;          //turn off timer2 for configuration
     PIR1bits.TMR2IF = 0;           //reset Timer2 overflow interrupt flag
     
-    T2CONbits.T2CKPS = 0b10;       //pre-scaler set to 1:16
-    T2CONbits.T2OUTPS = 0b1111;    //post-scaler set to 1:16
+    T2CONbits.T2CKPS = 0b11;       //pre-scaler set to 1:64
+    T2CONbits.T2OUTPS = 0b0111;    //post-scaler set to 1:8
     TMR2 = 0;                      //clear timer2
     PR2 = 0xFF;                    //set timer2 "match" register to max value
     
-    // the above sets the interrupt freq to (((FOSC/4) / 16) / 16) = 7.813KHz
+    // the above sets the interrupt freq to (((FOSC/4) / 64) / 8) = 3.906KHz
     T2CONbits.TMR2ON = 1;          //turn on Timer2
     
     return;
@@ -100,48 +88,53 @@ void timer4_init(void) {
     T4CONbits.TMR4ON = 0;          //turn off timer2 for configuration
     PIR3bits.TMR4IF = 0;           //reset Timer4 overflow interrupt flag
     
-    T4CONbits.T4CKPS = 0b10;       //pre-scaler set to 1:16
-    T4CONbits.T4OUTPS = 0b0111;    //post-scaler set to 1:8
+    T4CONbits.T4CKPS = 0b11;       //pre-scaler set to 1:64
+    T4CONbits.T4OUTPS = 0b1111;    //post-scaler set to 1:16
     TMR4 = 0;                      //clear timer4
     PR4 = 0xFF;                    //set timer4 "match" register to max value
     
-    // the above sets the interrupt freq to (((FOSC/4) / 16) / 8) = 15.625KHz
+    // the above sets the interrupt freq to (((FOSC/4) / 64) / 16) = 1.935KHz
+    T4CONbits.TMR4ON = 1;
     
     return;
 }
 
 void tmr2_interrupt_handler(void){
+    
     button_debouncer(PORTAbits.RA2);    //update the button state
 
     //keep counting the seconds for which button pushed?
     if (button_pushed_flag) {
-        T4CONbits.TMR4ON = 1;           //start timer4
-        PC_shadow |= (1 << 2); 
-        PORTC = PC_shadow;              //turn on the light next to the button
+        PIE3bits.TMR4IE = 1;            //enable timer4 overflow interrupt
     } else {
-        T4CONbits.TMR4ON = 0;           //stop timer4
+        PIE3bits.TMR4IE = 0;            //disable timer4 overflow interrupt
         TMR4 = 0;                       //reset timer4
-        timer_value = 0;                //reset the "timer4 post-scaler"
+        timer4_pps = 0;                 //reset the "timer4 post-post-scaler"
         seconds_clock = 0;
-        PC_shadow &= ~(1 << 2);
-        PORTC = PC_shadow;              //turn off the light next to the button
     }
     
-    //update the shift register data
-    update_display_values(seconds_clock);
-    //shift out the new data
-    shiftout();
+    // we don't need to update the display at 4KHz...
+    if (display_update_scaler < 7){
+        //update the shift register data
+        update_display_values(seconds_clock);
+        //shift out the new data
+        shiftout();
+        display_update_scaler = 0;
+    } else {
+        display_update_scaler++;
+    }
 
     return;
 }
 
-void tmr4_interrupt_handler(void){
+void tmr4_interrupt_handler(void){     
+    
     //increment the "seconds" clock
-    timer_value++;
+    timer4_pps++;
 
-    if (timer_value >= timer4_period){
+    if (timer4_pps >= timer4_period){
         seconds_clock++;
-        timer_value = 0;
+        timer4_pps = 0;
     }
     
     // prevent the seconds clock from overflowing
@@ -241,10 +234,10 @@ void main(void) {
     OSCCONbits.SPLLEN = 0b0;    // 4xPLL disabled
     
     // turn on interrupts
-    PIE1bits.TMR2IE = 1;      //enable timer2 to PR2 match interrupt (PR2 is 0xFF by default)
-    PIE3bits.TMR4IE = 1;      //enable timer4 overflow interrupt
+    PIE1bits.TMR2IE = 1;      //enable timer2 to PR2 match interrupt
+    PIE3bits.TMR4IE = 1;      //enable timer4 to PR4 match interrupt
     INTCONbits.PEIE = 1;      //enable peripheral interrupts
-    INTCONbits.GIE = 1;       //general interrupts be on
+    INTCONbits.GIE = 1;       //general interrupts enabled
     
     // configure the timers so that the button duration can be counted with
     // some kind of accuracy
@@ -253,7 +246,11 @@ void main(void) {
         
     while(1){
         CLRWDT();               //clear the Watchdog Timer to keep the PIC from
-                                //resetting
+                                //resetting. sadly the program won't get here
+                                //if the button is pressed...
+        //flipping the LED to see when the watchdog timer is being cleared
+        PC_shadow ^= (1 << 2);
+        PORTC = PC_shadow;
     }
     return;
 }
@@ -268,8 +265,7 @@ void interrupt ISR(void){
     // check for timer4 overflow interrupt
     if(PIR3bits.TMR4IF == 1){
         tmr4_interrupt_handler();
-        PIR1bits.TMR1IF = 0;                 //timer one doesn't work if this
-                                               //line isn't commented. why?
+        PIR1bits.TMR1IF = 0;                //reset the interrupt flag
     }
     
     return;
