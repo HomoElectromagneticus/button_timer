@@ -6,7 +6,7 @@
  *                    _______
  *           VDD ---|1      14|--- VSS
  *               ---|2      13|---
- *               ---|3      12|---
+ *        CLKOUT ---|3      12|---
  *               ---|4      11|--- button input
  *               ---|5      10|--- shift register data
  *               ---|6       9|--- shift register clock 
@@ -22,13 +22,13 @@
 
 // CONFIG1
 #pragma config FOSC = INTOSC    // Oscillator Selection (INTOSC oscillator: I/O function on CLKIN pin)
-#pragma config WDTE = OFF       // Watchdog Timer Enable (WDT disabled)
+#pragma config WDTE = ON        // Watchdog Timer Enable (WDT disabled)
 #pragma config PWRTE = ON       // Power-up Timer Enable (PWRT enabled)
 #pragma config MCLRE = ON       // MCLR Pin Function Select (MCLR/VPP pin function is MCLR)
 #pragma config CP = OFF         // Flash Program Memory Code Protection (Program memory code protection is disabled)
 #pragma config CPD = OFF        // Data Memory Code Protection (Data memory code protection is disabled)
 #pragma config BOREN = ON       // Brown-out Reset Enable (Brown-out Reset enabled)
-#pragma config CLKOUTEN = OFF   // Clock Out Enable (CLKOUT function is disabled. I/O or oscillator function on the CLKOUT pin)
+#pragma config CLKOUTEN = ON   // Clock Out Enable (CLKOUT function is disabled. I/O or oscillator function on the CLKOUT pin)
 #pragma config IESO = OFF       // Internal/External Switchover (Internal/External Switchover mode is disabled)
 #pragma config FCMEN = OFF      // Fail-Safe Clock Monitor Enable (Fail-Safe Clock Monitor is disabled)
 
@@ -56,68 +56,50 @@ unsigned int display_index[10] = {
 
 unsigned int button_state_integral = 0;
 unsigned int button_debounce_threshold = 3;
-unsigned int button_state_integral_max = 6;
+unsigned int button_state_integral_max = 5;
 unsigned char button_pushed_flag = 0;
 unsigned int shift_register_data[2];
-unsigned short long display_update_scaler = 0;
-unsigned short long timer4_pps = 0;         //timer4 post-post-scaler
-unsigned short long timer4_period = 1935;  //set to overflow every tenth of a second
+unsigned int display_update_scaler = 0;
+unsigned int seconds_scaler = 0;         
+unsigned int seconds_divisor = 25;     //set to overflow every tenth of a second
 unsigned int seconds_clock = 0;
-unsigned char PC_shadow = 0;      //"shadow reg for PORTC to avoid R-M-W issues
+unsigned char PC_shadow = 0;      //shadow reg for PORTC to avoid R-M-W issues
 
 void timer2_init(void) {
     // timer2 is used to clock the main program loop
-    // the clock source is the system clock / 4 (2MHz)
+    // the clock source is the system clock / 4, which is 2MHz
     T2CONbits.TMR2ON = 0;          //turn off timer2 for configuration
     PIR1bits.TMR2IF = 0;           //reset Timer2 overflow interrupt flag
     
-    T2CONbits.T2CKPS = 0b11;       //pre-scaler set to 1:64
-    T2CONbits.T2OUTPS = 0b0111;    //post-scaler set to 1:8
+    T2CONbits.T2CKPS = 0b01;       //pre-scaler set to 1:4
+    T2CONbits.T2OUTPS = 0b1111;    //post-scaler set to 1:16
     TMR2 = 0;                      //clear timer2
-    PR2 = 0xFF;                    //set timer2 "match" register to max value
+    PR2 = 125;                    //set timer2 "match" register to max value
     
-    // the above sets the interrupt freq to (((FOSC/4) / 64) / 8) = 3.906KHz
+    // the above sets the interrupt freq to ((((2MHz) / 4) / 256) / 8) = 250Hz
     T2CONbits.TMR2ON = 1;          //turn on Timer2
     
     return;
 }
 
-void timer4_init(void) {
-    // timer4 is used to 
-    // the clock source is the system clock / 4 (2MHz)
-    T4CONbits.TMR4ON = 0;          //turn off timer2 for configuration
-    PIR3bits.TMR4IF = 0;           //reset Timer4 overflow interrupt flag
-    
-    T4CONbits.T4CKPS = 0b11;       //pre-scaler set to 1:64
-    T4CONbits.T4OUTPS = 0b1111;    //post-scaler set to 1:16
-    TMR4 = 0;                      //clear timer4
-    PR4 = 0xFF;                    //set timer4 "match" register to max value
-    
-    // the above sets the interrupt freq to (((FOSC/4) / 64) / 16) = 1.935KHz
-    T4CONbits.TMR4ON = 1;
-    
-    return;
-}
-
 void tmr2_interrupt_handler(void){
+    PC_shadow ^= (1 << 2);
+    PORTC = PC_shadow;
     
     button_debouncer(PORTAbits.RA2);    //update the button state
 
     //keep counting the seconds for which button pushed?
     if (button_pushed_flag) {
-        PIE3bits.TMR4IE = 1;            //enable timer4 overflow interrupt
+        count_seconds();                //count up
     } else {
-        PIE3bits.TMR4IE = 0;            //disable timer4 overflow interrupt
-        TMR4 = 0;                       //reset timer4
-        timer4_pps = 0;                 //reset the "timer4 post-post-scaler"
-        seconds_clock = 0;
+        seconds_scaler = 0;             //reset the clock
+        seconds_clock = 0;              //reset the clock
     }
     
-    // we don't need to update the display at 4KHz...
-    if (display_update_scaler < 7){
-        //update the shift register data
+    // we don't need to update the display at ~4KHz...
+    if (display_update_scaler < 4){
+        //update the shift register data, shift out the new values
         update_display_values(seconds_clock);
-        //shift out the new data
         shiftout();
         display_update_scaler = 0;
     } else {
@@ -127,14 +109,13 @@ void tmr2_interrupt_handler(void){
     return;
 }
 
-void tmr4_interrupt_handler(void){     
+void count_seconds(void){     
     
-    //increment the "seconds" clock
-    timer4_pps++;
+    seconds_scaler++;           //increment the "seconds" clock
 
-    if (timer4_pps >= timer4_period){
+    if (seconds_scaler >= seconds_divisor){
         seconds_clock++;
-        timer4_pps = 0;
+        seconds_scaler = 0;
     }
     
     // prevent the seconds clock from overflowing
@@ -170,7 +151,6 @@ void pulse_sr_clock(void){
     PORTC = PC_shadow;
     return;
 }
-
 
 void shiftout(void){
     // toggle the shift register's clock line 16 times to put in the new
@@ -217,6 +197,13 @@ int button_debouncer(unsigned int button_state){
 }
 
 void main(void) {
+    
+    // configure the internal program clock to run at 8MHz
+    OSCCONbits.SPLLEN = 0b0;    // 4xPLL disabled
+    OSCCONbits.IRCF = 0b1110;   // HFINTOSC set to 16MHz
+    OSCCONbits.SCS = 0b00;      // clock source set by FOSC config word
+
+    
     // configure the watchdog timer
     WDTCONbits.WDTPS = 0b01011; //set to 2s timer
     
@@ -228,29 +215,22 @@ void main(void) {
     ANSELA = 0b00000000;        //no analog inputs in this program!
     ANSELC = 0b00000000;        //no analog inputs in this program!
     
-    // configure the internal program clock to run at 8MHz
-    OSCCONbits.IRCF = 0b1110;   // HFINTOSC set to 8MHz
-    OSCCONbits.SCS = 0b00;      // clock source is internal
-    OSCCONbits.SPLLEN = 0b0;    // 4xPLL disabled
-    
     // turn on interrupts
     PIE1bits.TMR2IE = 1;      //enable timer2 to PR2 match interrupt
-    PIE3bits.TMR4IE = 1;      //enable timer4 to PR4 match interrupt
     INTCONbits.PEIE = 1;      //enable peripheral interrupts
     INTCONbits.GIE = 1;       //general interrupts enabled
     
     // configure the timers so that the button duration can be counted with
     // some kind of accuracy
     timer2_init();
-    timer4_init();
         
     while(1){
         CLRWDT();               //clear the Watchdog Timer to keep the PIC from
                                 //resetting. sadly the program won't get here
                                 //if the button is pressed...
         //flipping the LED to see when the watchdog timer is being cleared
-        PC_shadow ^= (1 << 2);
-        PORTC = PC_shadow;
+        //PC_shadow &= ~(1 << 2);
+        //PORTC = PC_shadow;
     }
     return;
 }
@@ -261,12 +241,6 @@ void interrupt ISR(void){
         tmr2_interrupt_handler();
         PIR1bits.TMR2IF = 0;                 //reset the interrupt flag
     }
-    
-    // check for timer4 overflow interrupt
-    if(PIR3bits.TMR4IF == 1){
-        tmr4_interrupt_handler();
-        PIR1bits.TMR1IF = 0;                //reset the interrupt flag
-    }
-    
+      
     return;
 }

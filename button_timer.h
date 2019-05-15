@@ -42,11 +42,10 @@ int button_debouncer(unsigned int);
 void shiftout(void);
 void update_display_values(unsigned int);
 void tmr2_interrupt_handler(void);
-void tmr4_interrupt_handler(void);
 void timer2_init(void);
-void timer4_init(void);
 void interrupt ISR(void);
 void pulse_sr_clock(void);
+void count_seconds(void);
 
 // Comment a function and leverage automatic documentation with slash star star
 /**
