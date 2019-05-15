@@ -74,7 +74,7 @@ void timer2_init(void) {
     T2CONbits.T2CKPS = 0b01;       //pre-scaler set to 1:4
     T2CONbits.T2OUTPS = 0b1111;    //post-scaler set to 1:16
     TMR2 = 0;                      //clear timer2
-    PR2 = 125;                    //set timer2 "match" register to max value
+    PR2 = 125;                     //set timer2 match reg to a "nice" value
     
     // the above sets the interrupt freq to ((((2MHz) / 4) / 125) / 16) = 250Hz
     T2CONbits.TMR2ON = 1;          //turn on Timer2
