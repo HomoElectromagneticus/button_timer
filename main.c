@@ -76,29 +76,30 @@ void timer2_init(void) {
     TMR2 = 0;                      //clear timer2
     PR2 = 125;                    //set timer2 "match" register to max value
     
-    // the above sets the interrupt freq to ((((2MHz) / 4) / 256) / 8) = 250Hz
+    // the above sets the interrupt freq to ((((2MHz) / 4) / 125) / 16) = 250Hz
     T2CONbits.TMR2ON = 1;          //turn on Timer2
     
     return;
 }
 
 void tmr2_interrupt_handler(void){
-    PC_shadow ^= (1 << 2);
-    PORTC = PC_shadow;
     
     button_debouncer(PORTAbits.RA2);    //update the button state
 
     //keep counting the seconds for which button pushed?
     if (button_pushed_flag) {
         count_seconds();                //count up
+        PC_shadow |= (1 << 2);
+        PORTC = PC_shadow;
     } else {
+        PC_shadow &= ~(1 << 2);
+        PORTC = PC_shadow;
         seconds_scaler = 0;             //reset the clock
         seconds_clock = 0;              //reset the clock
     }
     
-    // we don't need to update the display at ~4KHz...
-    if (display_update_scaler < 4){
-        //update the shift register data, shift out the new values
+    // update the display at ~62.5Hz
+    if (display_update_scaler < 8){
         update_display_values(seconds_clock);
         shiftout();
         display_update_scaler = 0;
@@ -188,6 +189,7 @@ int button_debouncer(unsigned int button_state){
         button_state_integral--;
     }
     
+    // set the flag accordingly
     if (button_state_integral >= button_debounce_threshold){
         button_pushed_flag = 1;
     } else {
@@ -203,7 +205,6 @@ void main(void) {
     OSCCONbits.IRCF = 0b1110;   // HFINTOSC set to 16MHz
     OSCCONbits.SCS = 0b00;      // clock source set by FOSC config word
 
-    
     // configure the watchdog timer
     WDTCONbits.WDTPS = 0b01011; //set to 2s timer
     
@@ -228,9 +229,6 @@ void main(void) {
         CLRWDT();               //clear the Watchdog Timer to keep the PIC from
                                 //resetting. sadly the program won't get here
                                 //if the button is pressed...
-        //flipping the LED to see when the watchdog timer is being cleared
-        //PC_shadow &= ~(1 << 2);
-        //PORTC = PC_shadow;
     }
     return;
 }
