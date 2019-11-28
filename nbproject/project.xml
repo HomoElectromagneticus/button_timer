@@ -6,9 +6,9 @@
             <name>tmr_rdout</name>
             <creation-uuid>988aa08b-b65e-40dd-b632-1f321b0e10f2</creation-uuid>
             <make-project-type>0</make-project-type>
-            <c-extensions>c</c-extensions>
+            <c-extensions/>
             <cpp-extensions/>
-            <header-extensions>h</header-extensions>
+            <header-extensions/>
             <asminc-extensions/>
             <sourceEncoding>ISO-8859-1</sourceEncoding>
             <sourceRootList/>
